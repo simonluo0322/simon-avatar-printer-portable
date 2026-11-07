@@ -13,6 +13,7 @@ video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
 #rank-hud .rh-ava{border-radius:50%;overflow:hidden;flex:0 0 auto;background:#213440;border-style:solid}
 #rank-hud .rh-ava img{width:100%;height:100%;object-fit:cover;display:block}
 #rank-hud .rh-txt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;justify-content:center}
+#rank-hud .rh-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
 #rank-hud .rh-lab{font-weight:700;line-height:1.2}
 #rank-hud .rh-name{font-weight:700;color:#e9f6ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
 #rank-hud .rh-score{color:#9fb3c8;white-space:nowrap;line-height:1.2}
@@ -67,7 +68,7 @@ function applyPlate(m){
 }
 // 采集用「屏幕角标」：排行榜不再依赖 3D 贴图，直接按窗口像素画 2D 文字，
 // 直播压到 540p 时名字和贡献值仍然是按最大可用字号渲染的。
-const RH_RING=['#ffcf6b','#dfe3e8','#e0925b'],RH_LABEL=['榜一','榜二','榜三'];
+const RH_RING=['#ffcf6b','#dfe3e8','#e0925b'],RH_LABEL=['TOP1','TOP2','TOP3'];
 let rankData=[];
 function hudRect(){const aspect=(v.videoWidth||1080)/(v.videoHeight||1920);const w=Math.min(innerWidth,innerHeight*aspect);const h=w/aspect;return {w:h>0?w:0,h,left:(innerWidth-w)/2,top:(innerHeight-h)/2}}
 function sizeRankHud(){
@@ -77,8 +78,8 @@ function sizeRankHud(){
   const tF=Math.round(r.w*0.038),lF=Math.round(r.w*0.029),nF=Math.round(r.w*0.032),sF=Math.round(r.w*0.027);
   // 名次与昵称的字号互换：名次用原来昵称的大号，昵称用原来名次的小号
   const labF=nF,nameF=lF;
-  // 头像高度 = 三行文字总高（1.2 倍行高），上下与三行文字严丝合缝
-  const ava=Math.round((labF+nameF+sF)*1.2);
+  // 头像高度 = 右侧文字总高（1.2 倍行高），上下与文字严丝合缝
+  const ava=Math.round((Math.max(labF,sF)+nameF)*1.2);
   hud.style.width=hudW+'px';
   hud.style.left=Math.round(r.left+r.w*0.565)+'px';
   hud.style.top=Math.round(r.top+r.h*0.205)+'px';
@@ -104,10 +105,11 @@ function renderRankHud(){
     const box=document.createElement('div');box.className='rh-ava';box.style.borderStyle='solid';box.style.borderColor=RH_RING[i];
     if(it&&it.a){const img=document.createElement('img');img.src=it.a;img.alt='';box.appendChild(img)}
     const txt=document.createElement('div');txt.className='rh-txt';
+    const head=document.createElement('div');head.className='rh-head';
     const lab=document.createElement('div');lab.className='rh-lab';lab.style.color=RH_RING[i];lab.textContent=RH_LABEL[i];
-    const nm=document.createElement('div');nm.className='rh-name';nm.textContent=it?(it.n||''):'虚位以待';if(!it)nm.style.color='#5b7183';
     const sc=document.createElement('div');sc.className='rh-score';sc.textContent=it?('贡献值 '+(it.s||0)):'—';
-    txt.append(lab,nm,sc);row.append(box,txt);hud.appendChild(row)
+    const nm=document.createElement('div');nm.className='rh-name';nm.textContent=it?(it.n||''):'虚位以待';if(!it)nm.style.color='#5b7183';
+    head.append(lab,sc);txt.append(head,nm);row.append(box,txt);hud.appendChild(row)
   }
   hud.style.display='flex';sizeRankHud()
 }
