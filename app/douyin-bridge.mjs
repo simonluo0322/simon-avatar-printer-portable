@@ -174,6 +174,14 @@ function handleWSFrame(buf) {
           const key = actor.name + '|' + giftName;
           const prev = giftCombo.get(key) || 0;
           const rc = info.repeat || 1;
+          // 抖音在连击结束后会重复推一帧同 repeat 值的礼物消息（实测 3–4 秒后到达），
+          // 同一个人同一个礼物、repeat 值没变且间隔很短，就是重复帧，直接丢弃。
+          const seen = giftSeen.get(key);
+          if (seen && seen.rc === rc && Date.now() - seen.at < 8000) {
+            return;
+          }
+          giftSeen.set(key, { rc, at: Date.now() });
+          if (giftSeen.size > 400) giftSeen.clear();
           const delta = rc > prev ? rc - prev : rc;
           giftCombo.set(key, rc);
           if (giftCombo.size > 400) giftCombo.clear();
@@ -304,6 +312,8 @@ function isDupeDomGift(ev) {
 }
 // —— 礼物：WebcastGiftMessage 协议级解析（DOM 弹幕里常常抓不到礼物，这里兜底） ——
 const giftCombo = new Map();
+// 协议层重复帧去重：同一个人同一个礼物、repeat 值没变、8 秒内重复到达的都丢掉。
+const giftSeen = new Map();
 function giftStrings(buf, depth = 0, out = []) {
   if (depth > 6) return out;
   for (const f of pbDecode(buf)) {

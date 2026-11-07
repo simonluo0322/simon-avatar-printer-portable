@@ -533,6 +533,36 @@ class DesktopApi:
             self._live.terminate()
             self._live.wait(timeout=5)
 
+def _patch_webview2_antithrottle():
+    """pywebview 把 CreationProperties.AdditionalBrowserArguments 写死成
+    '--disable-features=ElasticOverscroll'，会盖掉 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+    环境变量。窗口被遮挡或最小化时 WebView2 会把 rAF 节流到几帧每秒，镜像出来的画面就
+    成了幻灯片，所以这里在 CoreWebView2 创建前把反节流参数补回去。"""
+    try:
+        from webview.platforms import edgechromium as _ec
+        if getattr(_ec.EdgeChrome, '_dv_antithrottle', False):
+            return
+        extra = (' --disable-backgrounding-occluded-windows'
+                 ' --disable-renderer-backgrounding'
+                 ' --disable-background-timer-throttling')
+        orig_init = _ec.EdgeChrome.__init__
+
+        def patched(self, *a, **kw):
+            orig_init(self, *a, **kw)
+            try:
+                props = self.webview.CreationProperties
+                args = props.AdditionalBrowserArguments or ''
+                if 'disable-renderer-backgrounding' not in args:
+                    props.AdditionalBrowserArguments = args + extra
+            except Exception:
+                pass
+
+        _ec.EdgeChrome.__init__ = patched
+        _ec.EdgeChrome._dv_antithrottle = True
+    except Exception:
+        pass
+
+
 def main():
     # 本机部署修正：小窗由 pythonw 无控制台启动，出错时什么都看不到，这里把异常写进日志。
     if '--scene-view' in sys.argv:
@@ -565,6 +595,7 @@ def main():
     args = parser.parse_args()
     if args.scene_view:
         import webview
+        _patch_webview2_antithrottle()
         sizes = {'landscape': (1280, 720), 'landscape-1080p': (1920, 1080),
                  'portrait': (720, 1280), 'portrait-1080p': (1080, 1920)}
         width, height = sizes.get(args.scene_orient, (1280, 720))
@@ -590,6 +621,7 @@ def main():
         return
     if args.live_room:
         import webview
+        _patch_webview2_antithrottle()
         webview.settings['REMOTE_DEBUGGING_PORT'] = 9224
         room = room_id(args.live_room)
         webview.create_window('直播间登录 · ' + room, 'https://live.douyin.com/' + room, width=1180, height=800)
@@ -602,6 +634,7 @@ def main():
             threading.Event().wait()
         else:
             import webview
+            _patch_webview2_antithrottle()
             webview.create_window('头像打印机 · 桌面版', url, js_api=api, width=1380, height=860,
                 min_size=(900, 650), background_color='#0b0e14')
             def start_requested_room():
