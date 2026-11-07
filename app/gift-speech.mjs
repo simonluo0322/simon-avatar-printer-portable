@@ -1,7 +1,7 @@
 export function dbg(msg){try{fetch('/__diag',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'tts',msg:String(msg).slice(0,150)})}).catch(()=>{})}catch(e){}}
 
 export class GiftSpeech {
- constructor(onStatus=()=>{}){this.enabled=true;this.volume=.85;this.rate=1.08;this.voiceURI='';this.onStatus=onStatus;this.unlocked=false;this.previous=-1;this.queue=[];this.speaking=false;this.generation=0;this.neural=true;this.neuralVoice='zh-CN-XiaoxiaoNeural';this.audioUrls=new Map();this.currentAudio=null}
+ constructor(onStatus=()=>{}){this.enabled=true;this.volume=.85;this.rate=1.08;this.voiceURI='';this.onStatus=onStatus;this.unlocked=false;this.previous=-1;this.queue=[];this.speaking=false;this.generation=0;this.neural=false;this.neuralVoice='zh-CN-XiaoxiaoNeural';this.audioUrls=new Map();this.inflight=new Map();this.failStreak=0;this.currentAudio=null}
  voices(){return globalThis.speechSynthesis?.getVoices()||[]}
  preferred(){const voices=this.voices();return voices.find(v=>v.voiceURI===this.voiceURI)||voices.find(v=>/zh|cmn/i.test(v.lang)&&/xiaoxiao|xiaoyi|huihui|yaoyao|female|女/i.test(v.name))||voices.find(v=>/zh-CN/i.test(v.lang))||voices.find(v=>/^zh/i.test(v.lang))}
  text(name,gift,amount){
@@ -98,8 +98,20 @@ export class GiftSpeech {
    `${safe}来啦，欢迎！愿你眼睛里有光，日子里有钱。`
   ];
   let n=Math.floor(Math.random()*lines.length);if(n===this.lastWelcome)n=(n+1)%lines.length;this.lastWelcome=n;this.enqueue(lines[n])}
- enqueue(text){if(!this.enabled)return;if(!globalThis.speechSynthesis){this.onStatus('当前浏览器不支持语音播报');return}if(this.queue.length>=12){this.onStatus('播报队列已满，本次仅显示字幕：'+text);return}this.queue.push(text);this.pump()}
+ enqueue(text){if(!this.enabled)return;if(!globalThis.speechSynthesis){this.onStatus('当前浏览器不支持语音播报');return}if(this.queue.length>=12){this.onStatus('播报队列已满，本次仅显示字幕：'+text);return}this.queue.push(text);this.warm(text);this.pump()}
  say(name,gift,amount=1){this.unlocked=true;this.enqueue(this.text(name,gift,amount))}
+ // 提前合成：当前一句还在播的时候，后面排队的话已经在云端合好了，轮到时立刻出声。
+ warm(text){
+  if(!this.neural||this.audioUrls.has(text)||this.inflight.has(text)||this.inflight.size>=3)return;
+  const task=this.fetchAudio(text).catch(()=>null);
+  this.inflight.set(text,task);
+  task.finally(()=>this.inflight.delete(text))}
+ async fetchAudio(text){
+  const res=await fetch('/__tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:this.neuralVoice,rate:Math.round((this.rate-1)*100)})});
+  if(!res.ok||!(res.headers.get('content-type')||'').includes('audio'))throw new Error('tts '+res.status);
+  const blob=await res.blob(),url=URL.createObjectURL(blob);
+  if(this.audioUrls.size>=200){const k=this.audioUrls.keys().next().value;try{URL.revokeObjectURL(this.audioUrls.get(k))}catch(e){}this.audioUrls.delete(k)}
+  this.audioUrls.set(text,url);return url}
  pump(){
   if(!this.enabled||this.speaking||!this.queue.length)return;
   const text=this.queue.shift(),token=this.generation;
@@ -107,22 +119,25 @@ export class GiftSpeech {
   const finish=()=>{this.speaking=false;if(token===this.generation)this.pump()};
   if(this.neural){this.speakNeural(text,token,finish).catch(()=>this.speakSystem(text,token,finish))}
   else this.speakSystem(text,token,finish)}
- async audioFor(text){
-  if(this.audioUrls.has(text))return this.audioUrls.get(text);
-  const res=await fetch('/__tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:this.neuralVoice,rate:Math.round((this.rate-1)*100)})});
-  dbg('tts http '+res.status+' '+(res.headers.get('content-type')||'-'));
-  if(!res.ok||!(res.headers.get('content-type')||'').includes('audio'))throw new Error('tts unavailable '+res.status);
-  const blob=await res.blob(),url=URL.createObjectURL(blob);
-  if(this.audioUrls.size>=200){const k=this.audioUrls.keys().next().value;try{URL.revokeObjectURL(this.audioUrls.get(k))}catch(e){}this.audioUrls.delete(k)}
-  this.audioUrls.set(text,url);return url}
  async speakNeural(text,token,finish){
-  const url=await this.audioFor(text);
   if(token!==this.generation)return;
-  const audio=new Audio(url);
+  const started=Date.now();
+  const warmReady=this.audioUrls.has(text);
+  let url=this.audioUrls.get(text)||null;
+  if(!url){
+   try{url=await (this.inflight.get(text)||this.fetchAudio(text))}catch(e){url=null}
+  }
+  if(token!==this.generation)return;
+  // 还没合好时直接走边合成边播的流式地址，别干等。
+  const src=url||('/__tts?text='+encodeURIComponent(text)+'&voice='+encodeURIComponent(this.neuralVoice)+'&rate='+Math.round((this.rate-1)*100));
+  const audio=new Audio(src);
   audio.volume=this.volume;
-  audio.onended=finish;
-  audio.onerror=finish;
   this.currentAudio=audio;
+  let closed=false;
+  const done=()=>{if(closed)return;closed=true;finish()};
+  audio.onended=done;
+  audio.onerror=()=>{if(closed)return;closed=true;dbg('audio error '+(audio.error?audio.error.code:'?'));finish()};
+  audio.onplaying=()=>{if(!audio.logged){audio.logged=true;dbg('start delay '+(Date.now()-started)+'ms '+(warmReady?'warm':(url?'fetched':'stream')));this.failStreak=0}};
   try{await audio.play()}catch(e){dbg('play fail '+e.name+' '+e.message);finish();throw e}}
  speakSystem(text,token,finish){
   dbg('system speak');

@@ -121,6 +121,64 @@ def ensure_server():
             super().end_headers()
 
         # 叠加一个本地控制端点：让浏览器页面也能拉起“独立应用窗口”（无浏览器界面）。
+        def _stream_tts(self, text, voice, rate):
+            # 边合成边下发：页面拿到第一段音频就开始播，比整段合成完再播快 1 秒以上。
+            import asyncio
+            import edge_tts
+            key = (voice, rate, text)
+            cached = TTS_CACHE.get(key)
+            self.send_response(200)
+            self.send_header('Content-Type', 'audio/mpeg')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.close_connection = True
+
+            def emit(data):
+                self.wfile.write(data)
+                self.wfile.flush()
+
+            if cached:
+                try:
+                    emit(cached)
+                except Exception:
+                    pass
+                self._end_chunks(emit)
+                return
+            chunks = []
+
+            async def run():
+                communicate = edge_tts.Communicate(text, voice, rate='%+d%%' % rate)
+                async for chunk in communicate.stream():
+                    if chunk['type'] != 'audio':
+                        continue
+                    data = chunk['data']
+                    chunks.append(data)
+                    try:
+                        emit(data)
+                    except Exception:
+                        return
+
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(asyncio.wait_for(run(), timeout=15))
+            except Exception:
+                pass
+            finally:
+                loop.close()
+            self._end_chunks(emit)
+            if chunks:
+                audio = b''.join(chunks)
+                if len(TTS_CACHE) >= TTS_CACHE_MAX:
+                    TTS_CACHE.pop(next(iter(TTS_CACHE)))
+                TTS_CACHE[key] = audio
+
+        def _end_chunks(self, emit):
+            try:
+                self.wfile.flush()
+            except Exception:
+                pass
+
         def _guard(self):
             # 只允许本机页面调用（防其它网站借用本地服务拉进程）。
             if not str(self.headers.get('Host', '')).startswith('127.0.0.1:' + str(ACTIVE_PORT)):
@@ -240,6 +298,19 @@ def ensure_server():
 
         def do_GET(self):
             nonlocal bridge_process
+            if self.path.startswith('/__tts?'):
+                if not self._guard():
+                    return self._json(403, '{"error":"forbidden"}')
+                try:
+                    q = parse_qs(urlparse(self.path).query)
+                    text = (q.get('text') or [''])[0].strip()[:200]
+                    if not text:
+                        raise ValueError('empty text')
+                    voice = ((q.get('voice') or ['zh-CN-XiaoxiaoNeural'])[0])[:60]
+                    rate = max(-30, min(30, int(((q.get('rate') or ['8'])[0] or '8')[:4])))
+                except Exception:
+                    return self._json(400, '{"error":"bad"}')
+                return self._stream_tts(text, voice, rate)
             if self.path == '/__diag':
                 if not self._guard():
                     return self._json(403, '{"error":"forbidden"}')
