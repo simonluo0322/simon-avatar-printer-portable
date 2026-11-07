@@ -67,7 +67,7 @@ function applyPlate(m){
 }
 // 采集用「屏幕角标」：排行榜不再依赖 3D 贴图，直接按窗口像素画 2D 文字，
 // 直播压到 540p 时名字和贡献值仍然是按最大可用字号渲染的。
-const RH_RING=['#ffcf6b','#dfe3e8','#e0925b'],RH_LABEL=['冠军','亚军','季军'];
+const RH_RING=['#ffcf6b','#dfe3e8','#e0925b'],RH_LABEL=['榜一','榜二','榜三'];
 let rankData=[];
 function hudRect(){const aspect=(v.videoWidth||1080)/(v.videoHeight||1920);const w=Math.min(innerWidth,innerHeight*aspect);const h=w/aspect;return {w:h>0?w:0,h,left:(innerWidth-w)/2,top:(innerHeight-h)/2}}
 function sizeRankHud(){
