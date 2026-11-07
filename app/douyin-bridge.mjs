@@ -339,7 +339,23 @@ export function parseLike(text) {
   return Math.round(v * (m[2] ? 10000 : 1));
 }
 
-// 从弹幕行列表里找出新行：从末尾向前扫到已见签名即停；签名缓冲防重复。
+// 从弹幕行列表里找出新行：按「文本 → 出现次数」计数比对，同一个人反复发同一句话也不会被吞掉。
+export function diffNewMulti(lines, counts, cap = 80) {
+  const cur = new Map();
+  for (const l of lines) cur.set(l, (cur.get(l) || 0) + 1);
+  const need = new Map();
+  for (const [sig, n] of cur) { const prev = counts.get(sig) || 0; if (n > prev) need.set(sig, n - prev); }
+  const fresh = [];
+  for (let i = lines.length - 1; i >= 0 && fresh.length < cap; i--) {
+    const left = need.get(lines[i]) || 0;
+    if (left > 0) { fresh.unshift(lines[i]); need.set(lines[i], left - 1); }
+  }
+  counts.clear();
+  for (const [sig, n] of cur) counts.set(sig, n);
+  return fresh;
+}
+
+// 老版本：按「是否见过这条文本」去重，重复文字会被当成旧行。
 export function diffNew(lines, seen, cap = 80) {
   const fresh = [];
   for (let i = lines.length - 1; i >= 0 && fresh.length < cap; i--) {
@@ -574,14 +590,15 @@ export function _handleWSFrameForTest(buf) { handleWSFrame(buf) }
 export function _injectHubForTest(h) { hubRef = h }
 export function _avatarStateForTest() { return { avatars: { ...avatars }, roster: [...roster.entries()], cache: [...avatarCache.entries()], normMap: [...normMap.entries()] } }
 let lastLikes = null, clientCount = 0, chatSeen = false, historySkipped = false, owner = '';
+let lastOffRoomLog = 0;
 const roster = new Map(), likeState = { idx: 0, used: new Map() }, lastSeen = new Map();
-const seen = new Set(), avatars = {};
+const seenCounts = new Map(), avatars = {};
 const total = { comment: 0, gift: 0, like: 0, join: 0 };
 let likeTokens = 20, likeTokensAt = Date.now(), lastThrottleLog = 0, lastEventAt = 0, lastNavFix = 0, lastWsLikeAt = 0, lastWsJoinAt = 0, cdpEventSink = null, lastFollowerCount = null, lastFollowerPoll = 0;
 
 function resetRoomState() {
   lastLikes = null; chatSeen = false; historySkipped = false; owner = '';
-  roster.clear(); lastSeen.clear(); seen.clear();
+  roster.clear(); lastSeen.clear(); seenCounts.clear();
   for (const k of Object.keys(avatars)) delete avatars[k];
   likeState.used.clear(); likeState.idx = 0;
   hoverTried.clear();
@@ -856,6 +873,7 @@ async function run(hub) {
   }
 
   let commentResolution = Promise.resolve();
+let commentBacklog = 0;
   function handle(s) {
     if (s.owner) owner = s.owner;
     for (const [n, a] of Object.entries(s.avatars || {})) {
@@ -892,12 +910,15 @@ async function run(hub) {
     if (!historySkipped && (s.lines || []).length) {
       historySkipped = true;
       let skipped = 0;
-      for (const line of s.lines) if (!seen.has(line)) { seen.add(line); skipped++; }
+      for (const line of s.lines) { const c = seenCounts.get(line) || 0; if (!c) skipped++; seenCounts.set(line, c + 1); }
       if (skipped) console.log('[' + stamp() + '] ⏭ 跳过挂接前已存在的 %d 条历史弹幕（不打印旧评论）', skipped);
     }
-    for (const line of diffNew(s.lines || [], seen)) {
+    for (const line of diffNewMulti(s.lines || [], seenCounts)) {
       const ev = parseChatLine(line);
-      if (!ev) continue;
+      if (!ev) {
+        if (line.includes('：') || line.includes(':')) console.log('[' + stamp() + '] ❓ 弹幕行解析失败（%s）：%s', line.length, line.slice(0, 42));
+        continue;
+      }
       const key = normKey(ev.name);
       const avatar = avatars[ev.name] || (key && (normMap.get(key) || normAvatars[key])) || lookupAvatar(ev.name) || roster.get(ev.name) || '';
       if (!roster.has(ev.name)) likeState.used.clear();
@@ -905,23 +926,29 @@ async function run(hub) {
       lastSeen.set(ev.name, Date.now());
       if (ev.kind !== 'comment') parsedNames.push(ev.name);
       if (ev.kind === 'comment' || ev.kind === 'gift') {
-        // Preserve every comment, including repeated text; resolve its avatar before dispatch.
+        // 每条评论都派发（含重复文字）；头像解析串行补齐，但积压过多时先派发，避免越积越久像「没反应」。
+        if (commentBacklog >= 4) {
+          if (ev.kind === 'gift') emit({ type: 'gift', name: ev.name, gift: mapGift(ev.gift), raw: ev.gift, count: ev.count, avatar });
+          else emit({ type: 'comment', name: ev.name, text: ev.text, avatar });
+          continue;
+        }
+        commentBacklog++;
         commentResolution = commentResolution.then(async () => {
           if (room !== currentRoom) return;
           // 协议帧与弹幕几乎同时到达且必带头像：先短暂等待，命中就免去一次资料卡点击。
           if (!avatars[ev.name] && !(key && normMap.get(key)) && !avatar) {
-            for (let i = 0; i < 12 && room === currentRoom; i++) {
+            for (let i = 0; i < 6 && room === currentRoom; i++) {
               await sleep(200);
               if (avatars[ev.name] || (key && normMap.get(key))) break;
             }
           }
           if (room !== currentRoom) return;
-          if (!avatars[ev.name] && !(key && normMap.get(key)) && !avatar) await hoverResolveAvatars([ev.name]);
+          if (!avatars[ev.name] && !(key && normMap.get(key)) && !avatar && commentBacklog <= 2) await hoverResolveAvatars([ev.name]);
           if (room !== currentRoom) return;
           const resolved = avatars[ev.name] || (key && normMap.get(key)) || avatar;
           if (ev.kind === 'gift') emit({ type: 'gift', name: ev.name, gift: mapGift(ev.gift), raw: ev.gift, count: ev.count, avatar: resolved || '' });
           else emit({ type: 'comment', name: ev.name, text: ev.text, avatar: resolved || '' });
-        }).catch(err => console.error('评论头像补取失败：', err.message));
+        }).catch(err => console.error('评论头像补取失败：', err.message)).finally(() => { commentBacklog--; });
       }
       else if (ev.kind === 'follow') emit({ type: 'follow', name: ev.name, avatar });
       else if (ev.kind === 'join' && Date.now() - lastWsJoinAt > 30000) emit({ type: 'join', name: ev.name, avatar });
@@ -940,7 +967,13 @@ async function run(hub) {
       if (r && r.result && r.result.value) {
         const s = r.result.value;
         // Leave login / verification pages alone; only an explicit room switch navigates.
-        if (s.href && !s.href.includes('live.douyin.com/' + currentRoom)) return;
+        if (s.href && !s.href.includes('live.douyin.com/' + currentRoom)) {
+          if (Date.now() - lastOffRoomLog > 30000) {
+            lastOffRoomLog = Date.now();
+            console.log('[' + stamp() + '] ⚠ 当前页面不是目标直播间（%s），暂停读取弹幕', String(s.href).slice(0, 60));
+          }
+          return;
+        }
         if (!chatSeen && (s.lines.length || s.likes != null)) {
           chatSeen = true;
           console.log('[' + stamp() + '] ✅ 已读到直播数据：弹幕 %d 条，点赞计数 %s', s.lines.length, s.likes);
