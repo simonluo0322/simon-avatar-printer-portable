@@ -99,7 +99,7 @@ function sizeRankHud(){
 function renderRankHud(){
   const hud=document.getElementById('rank-hud');if(!hud)return;
   hud.innerHTML='';
-  const t=document.createElement('div');t.className='rh-title';t.textContent='贡献榜 TOP3';hud.appendChild(t);
+  const t=document.createElement('div');t.className='rh-title';t.textContent='本场贡献榜';hud.appendChild(t);
   const rows=rankData.slice(0,3);
   for(let i=0;i<3;i++){
     const it=rows[i]||null;
