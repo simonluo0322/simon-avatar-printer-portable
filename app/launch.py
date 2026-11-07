@@ -66,6 +66,35 @@ PLATE_STATE = {'on': True, 'name': '', 'score': '', 'avatar': '', 'hud': False, 
 AVATAR_CACHE = {}
 DIAG_LOG = []
 
+# 播报语音：系统 SAPI 太机械，改成微软神经语音（edge-tts，需要联网）。
+# 同一句话合过就缓存，第二次零延迟；断网时接口返回 503，页面自动退回系统语音。
+TTS_CACHE = {}
+TTS_CACHE_MAX = 300
+
+
+def synthesize_speech(text, voice, rate=8):
+    key = (voice, rate, text)
+    if key in TTS_CACHE:
+        return TTS_CACHE[key]
+    import asyncio
+    import edge_tts
+
+    async def render():
+        buf = bytearray()
+        communicate = edge_tts.Communicate(text, voice, rate=('%+d%%' % rate))
+        async for chunk in communicate.stream():
+            if chunk['type'] == 'audio':
+                buf.extend(chunk['data'])
+        return bytes(buf)
+
+    audio = asyncio.run(asyncio.wait_for(render(), timeout=12))
+    if not audio:
+        raise RuntimeError('tts empty')
+    if len(TTS_CACHE) >= TTS_CACHE_MAX:
+        TTS_CACHE.pop(next(iter(TTS_CACHE)))
+    TTS_CACHE[key] = audio
+    return audio
+
 def ensure_server():
     global ACTIVE_PORT
     # 8080 被代理等程序占用时自动换备用端口（8081/8181/8088）。
@@ -175,6 +204,28 @@ def ensure_server():
                     return self._json(200, '{"ok":true}')
                 except (ValueError, KeyError, TypeError):
                     return self._json(400, '{"error":"invalid message"}')
+            if self.path == '/__tts' and self._guard():
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                    if not 0 < length <= 8192:
+                        raise ValueError('bad length')
+                    body = json.loads(self.rfile.read(length))
+                    text = str(body.get('text') or '').strip()[:200]
+                    if not text:
+                        raise ValueError('empty text')
+                    voice = str(body.get('voice') or 'zh-CN-XiaoxiaoNeural')[:60]
+                    rate = int(body.get('rate') or 8)
+                    rate = max(-30, min(30, rate))
+                    audio = synthesize_speech(text, voice, rate)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'audio/mpeg')
+                    self.send_header('Content-Length', str(len(audio)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    self.wfile.write(audio)
+                    return
+                except Exception:
+                    return self._json(503, '{"error":"tts failed"}')
             if self.path != '/__scene-message' or not self._guard():
                 return self._json(403, '{"error":"forbidden"}')
             try:

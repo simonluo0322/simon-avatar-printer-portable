@@ -1,5 +1,5 @@
 export class GiftSpeech {
- constructor(onStatus=()=>{}){this.enabled=true;this.volume=.85;this.rate=1.08;this.voiceURI='';this.onStatus=onStatus;this.unlocked=false;this.previous=-1;this.queue=[];this.speaking=false;this.generation=0}
+ constructor(onStatus=()=>{}){this.enabled=true;this.volume=.85;this.rate=1.08;this.voiceURI='';this.onStatus=onStatus;this.unlocked=false;this.previous=-1;this.queue=[];this.speaking=false;this.generation=0;this.neural=true;this.neuralVoice='zh-CN-XiaoxiaoNeural';this.audioUrls=new Map();this.currentAudio=null}
  voices(){return globalThis.speechSynthesis?.getVoices()||[]}
  preferred(){const voices=this.voices();return voices.find(v=>v.voiceURI===this.voiceURI)||voices.find(v=>/zh|cmn/i.test(v.lang)&&/xiaoxiao|xiaoyi|huihui|yaoyao|female|女/i.test(v.name))||voices.find(v=>/zh-CN/i.test(v.lang))||voices.find(v=>/^zh/i.test(v.lang))}
  text(name,gift,amount){
@@ -98,6 +98,36 @@ export class GiftSpeech {
   let n=Math.floor(Math.random()*lines.length);if(n===this.lastWelcome)n=(n+1)%lines.length;this.lastWelcome=n;this.enqueue(lines[n])}
  enqueue(text){if(!this.enabled)return;if(!globalThis.speechSynthesis){this.onStatus('当前浏览器不支持语音播报');return}if(this.queue.length>=12){this.onStatus('播报队列已满，本次仅显示字幕：'+text);return}this.queue.push(text);this.pump()}
  say(name,gift,amount=1){this.unlocked=true;this.enqueue(this.text(name,gift,amount))}
- pump(){if(!this.enabled||this.speaking||!this.queue.length)return;const text=this.queue.shift(),u=new SpeechSynthesisUtterance(text),token=this.generation;const voice=this.preferred();if(voice)u.voice=voice;u.lang=voice?.lang||'zh-CN';u.rate=this.rate;u.pitch=1.16;u.volume=this.volume;this.speaking=true;this.onStatus(text);u.onend=()=>{if(token!==this.generation)return;this.speaking=false;this.pump()};u.onerror=e=>{if(token!==this.generation)return;this.speaking=false;this.onStatus('语音播放失败：'+e.error+'，请点击试听或更换语音');this.queue=[]};speechSynthesis.speak(u)}
- stop(){this.generation++;this.queue=[];this.speaking=false;globalThis.speechSynthesis?.cancel()}
+ pump(){
+  if(!this.enabled||this.speaking||!this.queue.length)return;
+  const text=this.queue.shift(),token=this.generation;
+  this.speaking=true;this.onStatus(text);
+  const finish=()=>{this.speaking=false;if(token===this.generation)this.pump()};
+  if(this.neural){this.speakNeural(text,token,finish).catch(()=>this.speakSystem(text,token,finish))}
+  else this.speakSystem(text,token,finish)}
+ async audioFor(text){
+  if(this.audioUrls.has(text))return this.audioUrls.get(text);
+  const res=await fetch('/__tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:this.neuralVoice,rate:Math.round((this.rate-1)*100)})});
+  if(!res.ok||!(res.headers.get('content-type')||'').includes('audio'))throw new Error('tts unavailable');
+  const blob=await res.blob(),url=URL.createObjectURL(blob);
+  if(this.audioUrls.size>=200){const k=this.audioUrls.keys().next().value;try{URL.revokeObjectURL(this.audioUrls.get(k))}catch(e){}this.audioUrls.delete(k)}
+  this.audioUrls.set(text,url);return url}
+ async speakNeural(text,token,finish){
+  const url=await this.audioFor(text);
+  if(token!==this.generation)return;
+  const audio=new Audio(url);
+  audio.volume=this.volume;
+  audio.onended=finish;
+  audio.onerror=finish;
+  this.currentAudio=audio;
+  try{await audio.play()}catch(e){finish();throw e}}
+ speakSystem(text,token,finish){
+  if(!globalThis.speechSynthesis){this.onStatus('当前浏览器不支持语音播报');finish();return}
+  const u=new SpeechSynthesisUtterance(text),voice=this.preferred();
+  if(voice)u.voice=voice;
+  u.lang=voice?.lang||'zh-CN';u.rate=this.rate;u.pitch=1.16;u.volume=this.volume;
+  u.onend=finish;
+  u.onerror=e=>{this.onStatus('语音播放失败：'+e.error+'，请点击试听或更换语音');this.queue=[];finish()};
+  speechSynthesis.speak(u)}
+ stop(){this.generation++;this.queue=[];this.speaking=false;try{this.currentAudio?.pause()}catch(e){}this.currentAudio=null;globalThis.speechSynthesis?.cancel()}
 }
