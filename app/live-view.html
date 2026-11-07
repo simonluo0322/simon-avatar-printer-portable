@@ -13,9 +13,9 @@ video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
 #rank-hud .rh-ava{border-radius:50%;overflow:hidden;flex:0 0 auto;background:#213440;border-style:solid}
 #rank-hud .rh-ava img{width:100%;height:100%;object-fit:cover;display:block}
 #rank-hud .rh-txt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;justify-content:center}
-#rank-hud .rh-lab{font-weight:700}
-#rank-hud .rh-name{font-weight:700;color:#e9f6ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#rank-hud .rh-score{color:#9fb3c8;white-space:nowrap}
+#rank-hud .rh-lab{font-weight:700;line-height:1.2}
+#rank-hud .rh-name{font-weight:700;color:#e9f6ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
+#rank-hud .rh-score{color:#9fb3c8;white-space:nowrap;line-height:1.2}
 </style></head><body>
 <div id="hint"><div>⏳ 等待主窗口直播画面…</div><div style="font-size:12px">请保持主窗口（打印台）开启且不要最小化<br><a id="fallback" href="/index.html?scene=1" style="display:none">镜像不可用？点此用独立渲染窗口打开</a></div></div>
 <video id="v" autoplay playsinline muted></video>
@@ -73,8 +73,12 @@ function hudRect(){const aspect=(v.videoWidth||1080)/(v.videoHeight||1920);const
 function sizeRankHud(){
   const hud=document.getElementById('rank-hud');if(!hud||hud.style.display==='none')return;
   const r=hudRect();if(!(r.w>40))return;
-  const hudW=Math.round(r.w*0.40),pad=Math.round(r.w*0.014),ava=Math.round(r.w*0.070);
+  const hudW=Math.round(r.w*0.40),pad=Math.round(r.w*0.014);
   const tF=Math.round(r.w*0.038),lF=Math.round(r.w*0.029),nF=Math.round(r.w*0.032),sF=Math.round(r.w*0.027);
+  // 名次与昵称的字号互换：名次用原来昵称的大号，昵称用原来名次的小号
+  const labF=nF,nameF=lF;
+  // 头像高度 = 三行文字总高（1.2 倍行高），上下与三行文字严丝合缝
+  const ava=Math.round((labF+nameF+sF)*1.2);
   hud.style.width=hudW+'px';
   hud.style.left=Math.round(r.left+r.w*0.565)+'px';
   hud.style.top=Math.round(r.top+r.h*0.205)+'px';
@@ -84,15 +88,15 @@ function sizeRankHud(){
     row.style.gap=Math.round(pad*0.8)+'px';
     row.style.padding=Math.round(pad*0.45)+'px '+Math.round(pad*0.7)+'px';
     const a=row.querySelector('.rh-ava');if(a){a.style.width=ava+'px';a.style.height=ava+'px';a.style.borderWidth=Math.max(2,Math.round(ava*0.09))+'px'}
-    const l=row.querySelector('.rh-lab');if(l)l.style.fontSize=lF+'px';
-    const n=row.querySelector('.rh-name');if(n)n.style.fontSize=nF+'px';
+    const l=row.querySelector('.rh-lab');if(l)l.style.fontSize=labF+'px';
+    const n=row.querySelector('.rh-name');if(n)n.style.fontSize=nameF+'px';
     const s=row.querySelector('.rh-score');if(s)s.style.fontSize=sF+'px';
   })
 }
 function renderRankHud(){
   const hud=document.getElementById('rank-hud');if(!hud)return;
   hud.innerHTML='';
-  const t=document.createElement('div');t.className='rh-title';t.textContent='贡献排行 TOP3';hud.appendChild(t);
+  const t=document.createElement('div');t.className='rh-title';t.textContent='贡献榜 TOP3';hud.appendChild(t);
   const rows=rankData.slice(0,3);
   for(let i=0;i<3;i++){
     const it=rows[i]||null;
