@@ -1,3 +1,5 @@
+export function dbg(msg){try{fetch('/__diag',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'tts',msg:String(msg).slice(0,150)})}).catch(()=>{})}catch(e){}}
+
 export class GiftSpeech {
  constructor(onStatus=()=>{}){this.enabled=true;this.volume=.85;this.rate=1.08;this.voiceURI='';this.onStatus=onStatus;this.unlocked=false;this.previous=-1;this.queue=[];this.speaking=false;this.generation=0;this.neural=true;this.neuralVoice='zh-CN-XiaoxiaoNeural';this.audioUrls=new Map();this.currentAudio=null}
  voices(){return globalThis.speechSynthesis?.getVoices()||[]}
@@ -108,7 +110,8 @@ export class GiftSpeech {
  async audioFor(text){
   if(this.audioUrls.has(text))return this.audioUrls.get(text);
   const res=await fetch('/__tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:this.neuralVoice,rate:Math.round((this.rate-1)*100)})});
-  if(!res.ok||!(res.headers.get('content-type')||'').includes('audio'))throw new Error('tts unavailable');
+  dbg('tts http '+res.status+' '+(res.headers.get('content-type')||'-'));
+  if(!res.ok||!(res.headers.get('content-type')||'').includes('audio'))throw new Error('tts unavailable '+res.status);
   const blob=await res.blob(),url=URL.createObjectURL(blob);
   if(this.audioUrls.size>=200){const k=this.audioUrls.keys().next().value;try{URL.revokeObjectURL(this.audioUrls.get(k))}catch(e){}this.audioUrls.delete(k)}
   this.audioUrls.set(text,url);return url}
@@ -120,8 +123,9 @@ export class GiftSpeech {
   audio.onended=finish;
   audio.onerror=finish;
   this.currentAudio=audio;
-  try{await audio.play()}catch(e){finish();throw e}}
+  try{await audio.play()}catch(e){dbg('play fail '+e.name+' '+e.message);finish();throw e}}
  speakSystem(text,token,finish){
+  dbg('system speak');
   if(!globalThis.speechSynthesis){this.onStatus('当前浏览器不支持语音播报');finish();return}
   const u=new SpeechSynthesisUtterance(text),voice=this.preferred();
   if(voice)u.voice=voice;
