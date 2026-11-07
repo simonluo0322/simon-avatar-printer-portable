@@ -9,11 +9,13 @@
 
 ## 界面预览
 
-下面两张来自上游项目的界面（本版在此基础上：右侧新增「贡献排行 TOP3」竖牌、底部换成 20 条带时间戳的互动播报记录）。
+下面是本版**实际运行**的窗口截图（Windows 桌面版，1380×860）：
 
-| 3D 打印现场 | 打印规则面板 |
+| 主界面：3D 打印现场 + 右侧「贡献排行 TOP3」 | 互动播报记录（20 条 + 时间戳） |
 | --- | --- |
-| ![3D 场景](app/docs/screenshots/01-3d-scene.jpg) | ![规则面板](app/docs/screenshots/02-rules-panel.png) |
+| ![主界面](app/docs/screenshots/06-main-window.png) | ![播报记录](app/docs/screenshots/07-speech-log.png) |
+
+上游项目的原始界面截图保留在 `app/docs/screenshots/01~05`，可用于对比。
 
 
 ---
