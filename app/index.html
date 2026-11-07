@@ -199,7 +199,7 @@ const LIKE_PRINT_CAP=50;
 // 单轮点赞上限：同一人连着点赞算一轮，一轮内最多计 3 次（超出不计分、不打印）。
 // 停手超过 LIKE_ROUND_GAP_MS 再点赞，视为新一轮重新计数。
 const LIKE_PER_ROUND=3;
-const LIKE_ROUND_GAP_MS=15000;
+const LIKE_ROUND_GAP_MS=10000;
 const likeRounds=new Map();
 function likeRoundAllow(key,count){
   const now=Date.now(),n=Math.max(1,Math.min(100,Number(count)||1));
