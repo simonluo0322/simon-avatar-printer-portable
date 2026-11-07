@@ -193,9 +193,9 @@ const GIFT_NAME_RULES=[
 const GIFT_FALLBACK='other';
 function giftKindByName(raw){const s=String(raw||'');for(const [re,k] of GIFT_NAME_RULES)if(re.test(s))return k;return GIFT_FALLBACK}
 const SHALLOW_POINTS={like:1,comment:2,follow:5,join:0};
-const LIKE_CAP=10;
-// 点赞打印上限：每人最多打印 20 张（按点赞数算），防止一个人狂点赞把队列刷爆。
-const LIKE_PRINT_CAP=10;
+const LIKE_CAP=50;
+// 点赞打印上限：每人最多打印 50 张（按点赞数算），防止一个人狂点赞把队列刷爆。
+const LIKE_PRINT_CAP=50;
 const likePrints=new Map();
 const rankScores=new Map();
 function scoreOf(type,amount,rawGift){const n=Math.max(1,Math.min(100,Number(amount)||1));if(Object.hasOwn(SHALLOW_POINTS,type))return{pts:SHALLOW_POINTS[type]*n,gift:false};let k='other';if(type==='gift'){k=giftKindByName(rawGift)}else{k=Object.hasOwn(GIFT_POINTS,type)?type:'other'}const g=Object.hasOwn(GIFT_POINTS,k)?GIFT_POINTS[k]:GIFT_POINTS.other;return{pts:g*n,gift:true}}
