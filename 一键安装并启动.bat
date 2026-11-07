@@ -4,16 +4,18 @@ setlocal enableextensions
 cd /d "%~dp0"
 title 头像打印机 · 一键安装并启动
 
-set "RUNTIME_URL=https://github.com/simonluo0322/simon-avatar-printer-portable/releases/download/v1.0.0/runtime-win64.zip"
+set "RUNTIME_URL=https://github.com/simonluo0322/simon-avatar-printer-portable/releases/latest/download/runtime-win64.zip"
+set "RUNTIME_FALLBACK=https://github.com/simonluo0322/simon-avatar-printer-portable/releases/download/v1.0.0/runtime-win64.zip"
 
 if exist "%~dp0runtime\python\python.exe" if exist "%~dp0runtime\node\node.exe" goto READY
 
 echo.
-echo   首次安装：正在下载运行环境（约 160MB，只需下载一次）
+echo   首次安装：正在下载运行环境（约 62MB 压缩包，解压约 157MB，只需下载一次）
 echo   下载地址：%RUNTIME_URL%
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue';try{Invoke-WebRequest -Uri '%RUNTIME_URL%' -OutFile '%~dp0runtime.zip' -UseBasicParsing}catch{exit 1}"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue';$urls=@('%RUNTIME_URL%','%RUNTIME_FALLBACK%');foreach($u in $urls){try{Write-Host ('  正在下载 ' + $u);Invoke-WebRequest -Uri $u -OutFile '%~dp0runtime.zip' -UseBasicParsing;if((Get-Item -LiteralPath '%~dp0runtime.zip').Length -gt 1000000){exit 0}}catch{Write-Host ('  失败，尝试备用地址')}};exit 1"
 if not exist "%~dp0runtime.zip" goto DLFAIL
+for %%A in ("%~dp0runtime.zip") do if %%~zA LSS 1000000 goto DLFAIL
 echo   正在解压运行环境...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try{Expand-Archive -LiteralPath '%~dp0runtime.zip' -DestinationPath '%~dp0' -Force}catch{exit 1}"
 del "%~dp0runtime.zip" >nul 2>nul
