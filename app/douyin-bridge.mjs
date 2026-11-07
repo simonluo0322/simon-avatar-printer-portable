@@ -9,6 +9,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { startWSServer } from './bridge-ws.mjs';
+import { checkEvent, checkName, reloadSafetyWords } from './safety.mjs';
 import zlib from 'node:zlib';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -593,7 +594,8 @@ let lastLikes = null, clientCount = 0, chatSeen = false, historySkipped = false,
 let lastOffRoomLog = 0;
 const roster = new Map(), likeState = { idx: 0, used: new Map() }, lastSeen = new Map();
 const seenCounts = new Map(), avatars = {};
-const total = { comment: 0, gift: 0, like: 0, join: 0 };
+const total = { comment: 0, gift: 0, like: 0, join: 0, blocked: 0 };
+let lastBlockLog = 0, lastSafetyReload = Date.now();
 let likeTokens = 20, likeTokensAt = Date.now(), lastThrottleLog = 0, lastEventAt = 0, lastNavFix = 0, lastWsLikeAt = 0, lastWsJoinAt = 0, cdpEventSink = null, lastFollowerCount = null, lastFollowerPoll = 0;
 
 function resetRoomState() {
@@ -602,7 +604,7 @@ function resetRoomState() {
   for (const k of Object.keys(avatars)) delete avatars[k];
   likeState.used.clear(); likeState.idx = 0;
   hoverTried.clear();
-  total.comment = total.gift = total.like = total.join = 0;
+  total.comment = total.gift = total.like = total.join = total.blocked = 0;
 }
 
 // 关注检测：轮询登录账号菜单里的粉丝数，涨粉即打印头像（归属最近活跃观众）。
@@ -863,6 +865,16 @@ async function run(hub) {
   ws.onclose = () => fail(new Error('CDP closed'));
 
   function emit(ev) {
+    const blockWhy = checkEvent(ev);
+    if (blockWhy) {
+      total.blocked++;
+      const nowMs = Date.now();
+      if (nowMs - lastBlockLog > 5000) {
+        lastBlockLog = nowMs;
+        console.log('[' + stamp() + '] ⛔ 已拦截（%s）：%s', blockWhy, String(ev.name || ev.text || '').slice(0, 20));
+      }
+      return;
+    }
     if (ev.type === 'gift' && isDupeDomGift(ev)) return;
     lastEventAt = Date.now();
     hub.broadcast(ev);
@@ -877,7 +889,7 @@ let commentBacklog = 0;
   function handle(s) {
     if (s.owner) owner = s.owner;
     for (const [n, a] of Object.entries(s.avatars || {})) {
-      if (!a || !n || n === owner || isJunkName(n)) continue;
+      if (!a || !n || n === owner || isJunkName(n) || checkName(n)) continue;
       if (!roster.has(n) && !(s.lines || []).some(line => parseChatLine(line)?.name === n)) continue;
       if (!roster.has(n)) likeState.used.clear();
       feedAvatar(n, a, '页面头像');
@@ -917,6 +929,17 @@ let commentBacklog = 0;
       const ev = parseChatLine(line);
       if (!ev) {
         if (line.includes('：') || line.includes(':')) console.log('[' + stamp() + '] ❓ 弹幕行解析失败（%s）：%s', line.length, line.slice(0, 42));
+        continue;
+      }
+      // 安全过滤：违规昵称/内容一进直播间画面就是主播的责任，这里直接丢弃。
+      const blockWhy = checkEvent(ev);
+      if (blockWhy) {
+        total.blocked++;
+        const bkNow = Date.now();
+        if (bkNow - lastBlockLog > 5000) {
+          lastBlockLog = bkNow;
+          console.log('[' + stamp() + '] ⛔ 已拦截（%s）：%s', blockWhy, String(ev.name || '').slice(0, 20));
+        }
         continue;
       }
       const key = normKey(ev.name);
@@ -984,6 +1007,10 @@ let commentBacklog = 0;
   }, 300);
 
   const watch = setInterval(() => {
+    if (Date.now() - lastSafetyReload > 30000) {
+      lastSafetyReload = Date.now();
+      try { reloadSafetyWords(); } catch { }
+    }
     const n = hub.clientCount();
     if (n !== clientCount) {
       if (n > clientCount) {
@@ -992,7 +1019,7 @@ let commentBacklog = 0;
       } else console.log('[' + stamp() + '] 打印页面断开（剩 %d 个）', n);
       clientCount = n;
     }
-    if (hub.clientCount()) hub.broadcast({ type: 'ping', room: currentRoom, ts: Date.now(), people: [...roster.entries()].sort((a, b) => Number(!!b[1]) - Number(!!a[1])).slice(0, 8).map(([name, avatar]) => ({ name, avatar })), stats: { comment: total.comment, like: total.like, gift: total.gift, join: total.join, lastAgo: lastEventAt ? Date.now() - lastEventAt : null, roster: roster.size } });
+    if (hub.clientCount()) hub.broadcast({ type: 'ping', room: currentRoom, ts: Date.now(), people: [...roster.entries()].sort((a, b) => Number(!!b[1]) - Number(!!a[1])).slice(0, 8).map(([name, avatar]) => ({ name, avatar })), stats: { comment: total.comment, like: total.like, gift: total.gift, join: total.join, blocked: total.blocked, lastAgo: lastEventAt ? Date.now() - lastEventAt : null, roster: roster.size } });
   }, 2000);
   watch.unref?.();
 
