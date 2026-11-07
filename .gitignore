@@ -1,0 +1,16 @@
+# 运行环境（首次安装由 一键安装并启动.bat 自动下载）
+/runtime/
+runtime.zip
+
+# 本地运行产物
+*.log
+.bridge-room
+*.bak
+*.bak2
+avatar-cache.json
+__pycache__/
+*.pyc
+
+# 各窗口的浏览器用户目录（含登录态，绝不入库）
+.*-webview-profile/
+.bridge-profile/
