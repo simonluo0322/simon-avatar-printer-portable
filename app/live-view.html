@@ -75,7 +75,7 @@ function hudRect(){const aspect=(v.videoWidth||1080)/(v.videoHeight||1920);const
 function sizeRankHud(){
   const hud=document.getElementById('rank-hud');if(!hud||hud.style.display==='none')return;
   const r=hudRect();if(!(r.w>40))return;
-  const hudW=Math.round(r.w*0.37),pad=Math.round(r.w*0.014);
+  const hudW=Math.round(r.w*0.39),pad=Math.round(r.w*0.014);
   const tF=Math.round(r.w*0.038),lF=Math.round(r.w*0.029),nF=Math.round(r.w*0.032),sF=Math.round(r.w*0.027);
   // 名次与昵称的字号互换：名次用原来昵称的大号，昵称用原来名次的小号
   const labF=nF,nameF=lF;
@@ -111,7 +111,7 @@ function renderRankHud(){
     const lab=document.createElement('div');lab.className='rh-lab';lab.style.color=RH_RING[i];lab.textContent=RH_LABEL[i];
     const sep=document.createElement('div');sep.className='rh-sep';sep.textContent='|';
     const sc=document.createElement('div');sc.className='rh-score';sc.textContent=it?('贡献值 '+(it.s||0)):'—';
-    const nm=document.createElement('div');nm.className='rh-name';nm.textContent=it?(it.n||''):'虚位以待';if(!it)nm.style.color='#5b7183';
+    const nm=document.createElement('div');nm.className='rh-name';nm.textContent=it?('@'+(it.n||'')):'虚位以待';if(!it)nm.style.color='#5b7183';
     head.append(lab,sep,sc);txt.append(head,nm);row.append(box,txt);hud.appendChild(row)
   }
   hud.style.display='flex';sizeRankHud()
