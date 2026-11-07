@@ -62,7 +62,7 @@ ACTIVE_PORT = 8080
 
 # 本机部署修正：状态牌状态存一份在本地服务里，小窗定时来读，避免只靠 WebRTC 数据通道推送
 # （通道一旦中断，小窗就停在最后一次收到的那一帧：隐藏之后再也显示不出来）。
-PLATE_STATE = {'on': True, 'name': '', 'score': '', 'avatar': ''}
+PLATE_STATE = {'on': True, 'name': '', 'score': '', 'avatar': '', 'hud': False, 'rank': []}
 AVATAR_CACHE = {}
 DIAG_LOG = []
 
@@ -169,7 +169,7 @@ def ensure_server():
                     if not 0 < length <= 8 * 1024 * 1024:
                         raise ValueError('bad length')
                     body = json.loads(self.rfile.read(length))
-                    for key in ('on', 'name', 'score', 'avatar'):
+                    for key in ('on', 'name', 'score', 'avatar', 'hud', 'rank'):
                         if key in body:
                             PLATE_STATE[key] = body[key]
                     return self._json(200, '{"ok":true}')
@@ -320,6 +320,36 @@ def ensure_server():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return f'http://127.0.0.1:{ACTIVE_PORT}/', server
 
+def fit_window_to_screen(width, height):
+    """把画面目标尺寸换算成「不超出屏幕工作区」的窗口外框尺寸，并严格保持宽高比。
+
+    画面元素用的是 object-fit:contain —— 窗口一旦超过工作区，系统会把窗口压扁，
+    画面就被缩到中间、两侧留大片黑边，采集时黑边白白吃掉像素。这里按可用高度
+    等比缩小，并用 AdjustWindowRectEx 反推外框，让客户区正好等于画面比例。
+    """
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+        work = wt.RECT()
+        ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work), 0)
+        avail_w = work.right - work.left
+        avail_h = work.bottom - work.top
+        frame = wt.RECT()
+        ctypes.windll.user32.AdjustWindowRectEx(ctypes.byref(frame), 0x00CF0000, False, 0)  # WS_OVERLAPPEDWINDOW
+        extra_w = frame.right - frame.left
+        extra_h = frame.bottom - frame.top
+        max_cw = max(320, avail_w - extra_w - 8)
+        max_ch = max(240, avail_h - extra_h)
+        scale = min(max_cw / float(width), max_ch / float(height), 1.0)
+        cw, ch = int(width * scale), int(height * scale)
+        print('[scene] 目标画面 %dx%d（放大 %.2f）→ 客户区 %dx%d，窗口外框 %dx%d，可用 %dx%d'
+              % (width, height, 1.0 / scale, cw, ch, cw + extra_w, ch + extra_h, avail_w, avail_h))
+        return cw + extra_w, ch + extra_h
+    except Exception as exc:
+        print('[scene] 自适应窗口尺寸失败，沿用 %dx%d：%s' % (width, height, exc))
+        return width, height
+
+
 def scene_windows():
     """返回当前存在的「直播小窗」顶层窗口句柄（用于置顶或判断是否已有小窗）。"""
     handles = []
@@ -431,6 +461,7 @@ class DesktopApi:
             w, h = max(200, min(int(w), 4096)), max(200, min(int(h), 4096))
         except Exception:
             return 'bad size'
+        w, h = fit_window_to_screen(w, h)
         for win in list(self._scene_windows):
             try:
                 if not getattr(win, 'closed', False):
@@ -537,6 +568,7 @@ def main():
         sizes = {'landscape': (1280, 720), 'landscape-1080p': (1920, 1080),
                  'portrait': (720, 1280), 'portrait-1080p': (1080, 1920)}
         width, height = sizes.get(args.scene_orient, (1280, 720))
+        width, height = fit_window_to_screen(width, height)
         # 本机部署修正：主服务端口是动态选的（本版本实际固定为 8081），
         # 子进程这里的 ACTIVE_PORT 只有模块默认值 8080，会导致小窗打开后空白。
         base = 'http://127.0.0.1:' + str(ACTIVE_PORT) + '/'

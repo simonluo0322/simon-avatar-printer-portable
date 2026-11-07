@@ -7,10 +7,20 @@ video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
 #plate img{width:48px;height:48px;border-radius:50%;object-fit:cover;background:#e9a48d}
 #plate strong{font-size:24px;display:block}
 #plate span{display:block;font-size:11px;color:#656b73}
+#rank-hud{position:fixed;display:none;flex-direction:column;background:linear-gradient(#0d2531,#091b25);border-radius:8px;box-shadow:0 8px 22px #0009;font-family:'Microsoft YaHei','PingFang SC',sans-serif;overflow:hidden;z-index:6}
+#rank-hud .rh-title{color:#eddb9a;font-weight:800;text-align:center;border-bottom:1px solid rgba(237,219,154,.3)}
+#rank-hud .rh-row{display:flex;align-items:center}
+#rank-hud .rh-ava{border-radius:50%;overflow:hidden;flex:0 0 auto;background:#213440;border-style:solid}
+#rank-hud .rh-ava img{width:100%;height:100%;object-fit:cover;display:block}
+#rank-hud .rh-txt{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;justify-content:center}
+#rank-hud .rh-lab{font-weight:700}
+#rank-hud .rh-name{font-weight:700;color:#e9f6ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#rank-hud .rh-score{color:#9fb3c8;white-space:nowrap}
 </style></head><body>
 <div id="hint"><div>⏳ 等待主窗口直播画面…</div><div style="font-size:12px">请保持主窗口（打印台）开启且不要最小化<br><a id="fallback" href="/index.html?scene=1" style="display:none">镜像不可用？点此用独立渲染窗口打开</a></div></div>
 <video id="v" autoplay playsinline muted></video>
 <div id="plate"><img id="plate-img" alt="当前头像"><div><span id="plate-name">等待头像进入队列</span><strong id="plate-score">-- <small>分</small></strong></div></div>
+<div id="rank-hud"></div>
 <div id="interaction" tabindex="0" aria-label="左键旋转，右键平移，滚轮缩放" style="position:fixed;touch-action:none;outline:none"></div>
 <script type="importmap">{"imports":{"three":"./assets/three.module.js"}}</script>
 <script type="module">
@@ -53,7 +63,59 @@ function applyPlate(m){
   if(pn&&m.name)pn.textContent=m.name;
   if(ps&&m.score!==undefined&&m.score!=='')ps.innerHTML=m.score;
   if(pi&&m.avatar){pi.src=m.avatar;pi.style.display='';}else if(pi&&!m.avatar){pi.style.display='none'}
+  applyRankHud(m)
 }
+// 采集用「屏幕角标」：排行榜不再依赖 3D 贴图，直接按窗口像素画 2D 文字，
+// 直播压到 540p 时名字和贡献值仍然是按最大可用字号渲染的。
+const RH_RING=['#ffcf6b','#dfe3e8','#e0925b'],RH_LABEL=['冠军','亚军','季军'];
+let rankData=[];
+function hudRect(){const aspect=(v.videoWidth||1080)/(v.videoHeight||1920);const w=Math.min(innerWidth,innerHeight*aspect);const h=w/aspect;return {w:h>0?w:0,h,left:(innerWidth-w)/2,top:(innerHeight-h)/2}}
+function sizeRankHud(){
+  const hud=document.getElementById('rank-hud');if(!hud||hud.style.display==='none')return;
+  const r=hudRect();if(!(r.w>40))return;
+  const hudW=Math.round(r.w*0.40),pad=Math.round(r.w*0.014),ava=Math.round(r.w*0.070);
+  const tF=Math.round(r.w*0.038),lF=Math.round(r.w*0.029),nF=Math.round(r.w*0.032),sF=Math.round(r.w*0.027);
+  hud.style.width=hudW+'px';
+  hud.style.left=Math.round(r.left+r.w*0.565)+'px';
+  hud.style.top=Math.round(r.top+r.h*0.205)+'px';
+  const t=hud.querySelector('.rh-title');
+  if(t){t.style.fontSize=tF+'px';t.style.padding=Math.round(pad*0.7)+'px 0 '+Math.round(pad*0.6)+'px';t.style.marginBottom=Math.round(pad*0.5)+'px'}
+  hud.querySelectorAll('.rh-row').forEach(row=>{
+    row.style.gap=Math.round(pad*0.8)+'px';
+    row.style.padding=Math.round(pad*0.45)+'px '+Math.round(pad*0.7)+'px';
+    const a=row.querySelector('.rh-ava');if(a){a.style.width=ava+'px';a.style.height=ava+'px';a.style.borderWidth=Math.max(2,Math.round(ava*0.09))+'px'}
+    const l=row.querySelector('.rh-lab');if(l)l.style.fontSize=lF+'px';
+    const n=row.querySelector('.rh-name');if(n)n.style.fontSize=nF+'px';
+    const s=row.querySelector('.rh-score');if(s)s.style.fontSize=sF+'px';
+  })
+}
+function renderRankHud(){
+  const hud=document.getElementById('rank-hud');if(!hud)return;
+  hud.innerHTML='';
+  const t=document.createElement('div');t.className='rh-title';t.textContent='贡献排行 TOP3';hud.appendChild(t);
+  const rows=rankData.slice(0,3);
+  for(let i=0;i<3;i++){
+    const it=rows[i]||null;
+    const row=document.createElement('div');row.className='rh-row';
+    const box=document.createElement('div');box.className='rh-ava';box.style.borderStyle='solid';box.style.borderColor=RH_RING[i];
+    if(it&&it.a){const img=document.createElement('img');img.src=it.a;img.alt='';box.appendChild(img)}
+    const txt=document.createElement('div');txt.className='rh-txt';
+    const lab=document.createElement('div');lab.className='rh-lab';lab.style.color=RH_RING[i];lab.textContent=RH_LABEL[i];
+    const nm=document.createElement('div');nm.className='rh-name';nm.textContent=it?(it.n||''):'虚位以待';if(!it)nm.style.color='#5b7183';
+    const sc=document.createElement('div');sc.className='rh-score';sc.textContent=it?('贡献值 '+(it.s||0)):'—';
+    txt.append(lab,nm,sc);row.append(box,txt);hud.appendChild(row)
+  }
+  hud.style.display='flex';sizeRankHud()
+}
+function applyRankHud(m){
+  const hud=document.getElementById('rank-hud');if(!hud)return;
+  if(!(m&&m.hud)){hud.style.display='none';rankData=[];window.__rhSig='';return}
+  const sig=JSON.stringify(m.rank||[]);
+  if(sig!==window.__rhSig){window.__rhSig=sig;rankData=(Array.isArray(m.rank)?m.rank:[]);renderRankHud()}
+  hud.style.display='flex';sizeRankHud()
+}
+window.addEventListener('resize',()=>sizeRankHud());
+v.addEventListener('loadedmetadata',()=>sizeRankHud());
 function reportDiag(extra){try{fetch('/__diag',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({kind:'view'},extra))}).catch(()=>{})}catch(e){}}
 const pullPlate=()=>fetch('/__plate',{cache:'no-store'}).then(r=>{if(!r.ok){reportDiag({err:'http',status:r.status})}return r.json()}).then(m=>{applyPlate(m);window.__lastPull=Date.now()}).catch(e=>reportDiag({err:'fetch',m:String(e)}));
 setInterval(pullPlate,1500);pullPlate();
