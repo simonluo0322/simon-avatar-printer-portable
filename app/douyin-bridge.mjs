@@ -314,6 +314,8 @@ function isDupeDomGift(ev) {
 const giftCombo = new Map();
 // 协议层重复帧去重：同一个人同一个礼物、repeat 值没变、8 秒内重复到达的都丢掉。
 const giftSeen = new Map();
+// 最近一次收到协议级礼物帧的时间；只要协议还活着，弹幕文本里的送礼行就一律不采信。
+let lastProtoGiftAt = 0;
 function giftStrings(buf, depth = 0, out = []) {
   if (depth > 6) return out;
   for (const f of pbDecode(buf)) {
@@ -337,6 +339,7 @@ function emitGiftWS(user, giftName, count) {
   if (!user || !user.name) return;
   const g = mapGift(giftName);
   total.gift++; lastEventAt = Date.now();
+  lastProtoGiftAt = lastEventAt;
   markProtoGift(user.name, giftName);
   hubRef.broadcast({ type: 'gift', name: user.name, gift: g, raw: giftName, count: Math.max(1, Math.min(100, count || 1)), avatar: user.avatar || '' });
   console.log('[' + stamp() + '] 🎁 %s 送出 %s x%d → %s（协议级）', user.name, giftName, count || 1, g);
@@ -361,8 +364,13 @@ export function diffNewMulti(lines, counts, cap = 80) {
     const left = need.get(lines[i]) || 0;
     if (left > 0) { fresh.unshift(lines[i]); need.set(lines[i], left - 1); }
   }
-  counts.clear();
-  for (const [sig, n] of cur) counts.set(sig, n);
+  // 高水位记录：弹幕列表被新消息顶掉时同一行文本的条数会回落，下一轮再涨回来就会被
+  // 当成「新行」重放（实测表现为同一条送礼每 30 秒又报一次），所以只升不降。
+  for (const [sig, n] of cur) {
+    const prev = counts.get(sig) || 0;
+    if (n > prev) counts.set(sig, n);
+  }
+  if (counts.size > 1200) for (const k of [...counts.keys()].slice(0, 400)) counts.delete(k);
   return fresh;
 }
 
@@ -885,7 +893,12 @@ async function run(hub) {
       }
       return;
     }
-    if (ev.type === 'gift' && isDupeDomGift(ev)) return;
+    // 礼物只认协议帧：弹幕文本里的送礼行会长期留在 DOM 里，容易被反复扫成「新礼物」
+    // （实测开播一小时后同一条送礼每 30 秒重报一次、分数一直涨）。协议帧断了才退回文本路径。
+    if (ev.type === 'gift') {
+      if (Date.now() - lastProtoGiftAt < 10 * 60 * 1000) return;
+      if (isDupeDomGift(ev)) return;
+    }
     lastEventAt = Date.now();
     hub.broadcast(ev);
     if (ev.type === 'comment') { total.comment++; console.log('[' + stamp() + '] 💬 %s：%s%s', ev.name, ev.text || '', ev.avatar ? ' 🪪' : ' △无头像') }
