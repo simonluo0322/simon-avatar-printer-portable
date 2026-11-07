@@ -7,6 +7,15 @@
 - 上游项目：<https://github.com/rhfbgfgfdg999999/3d-printer-live>（MIT，作者「志哥AI」）
 - 本仓库：<https://github.com/simonluo0322/simon-avatar-printer-portable>
 
+## 界面预览
+
+下面两张来自上游项目的界面（本版在此基础上：右侧新增「贡献排行 TOP3」竖牌、底部换成 20 条带时间戳的互动播报记录）。
+
+| 3D 打印现场 | 打印规则面板 |
+| --- | --- |
+| ![3D 场景](app/docs/screenshots/01-3d-scene.jpg) | ![规则面板](app/docs/screenshots/02-rules-panel.png) |
+
+
 ---
 
 ## 一、朋友怎么装（三步）
