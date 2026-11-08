@@ -725,12 +725,163 @@ def _patch_webview2_antithrottle():
         pass
 
 
-def start_render_watchdog(window, url):
-    """长直播守护：页面探针断流或长时间零帧，就自动刷新窗口把画面救回来。"""
+def process_mem_mb(names):
+    """按进程名汇总内存（MB），用来看长时间运行是否在持续涨。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class PMC(ctypes.Structure):
+            _fields_ = [('cb', wintypes.DWORD), ('PageFaultCount', wintypes.DWORD),
+                        ('PeakWorkingSetSize', ctypes.c_size_t), ('WorkingSetSize', ctypes.c_size_t),
+                        ('QuotaPeakPagedPoolUsage', ctypes.c_size_t), ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                        ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t), ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                        ('PagefileUsage', ctypes.c_size_t), ('PeakPagefileUsage', ctypes.c_size_t)]
+
+        k32 = ctypes.windll.kernel32
+        psapi = ctypes.windll.psapi
+        arr = (wintypes.DWORD * 2048)()
+        need = wintypes.DWORD()
+        if not psapi.EnumProcesses(arr, ctypes.sizeof(arr), ctypes.byref(need)):
+            return None
+        total = 0
+        for idx in range(int(need.value) // ctypes.sizeof(wintypes.DWORD)):
+            pid = int(arr[idx])
+            if not pid:
+                continue
+            handle = k32.OpenProcess(0x1000 | 0x0400, False, pid)
+            if not handle:
+                continue
+            try:
+                buf = ctypes.create_unicode_buffer(1024)
+                size = wintypes.DWORD(1024)
+                if not k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    continue
+                if os.path.basename(buf.value).lower() not in names:
+                    continue
+                pmc = PMC()
+                pmc.cb = ctypes.sizeof(PMC)
+                if psapi.GetProcessMemoryInfo(handle, ctypes.byref(pmc), pmc.cb):
+                    total += int(pmc.WorkingSetSize)
+            finally:
+                k32.CloseHandle(handle)
+        return int(total / 1048576)
+    except Exception:
+        return None
+
+
+def find_printer_hwnd():
+    """找到主窗口句柄（按标题匹配），用于防最小化和截图。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        u.SetProcessDPIAware()
+        found = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def cb(hwnd, lparam):
+            if u.IsWindowVisible(hwnd):
+                n = u.GetWindowTextLengthW(hwnd)
+                if n:
+                    b = ctypes.create_unicode_buffer(n + 1)
+                    u.GetWindowTextW(hwnd, b, n + 1)
+                    if '头像打印机' in b.value:
+                        found.append(hwnd)
+            return True
+
+        u.EnumWindows(cb, 0)
+        return found[0] if found else None
+    except Exception:
+        return None
+
+
+def harden_window():
+    """去掉最小化按钮：开播时窗口一旦被最小化，WebView2 会被节流成 1fps，直播伴侣抓到的就是黑屏。"""
+    try:
+        import ctypes
+        hwnd = find_printer_hwnd()
+        if not hwnd:
+            return False
+        u = ctypes.windll.user32
+        style = u.GetWindowLongW(hwnd, -16)
+        style &= ~0x00020000  # WS_MINIMIZEBOX
+        u.SetWindowLongW(hwnd, -16, style)
+        u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0027)  # NOMOVE|NOSIZE|NOZORDER|FRAMECHANGED
+        diag_persist({'kind': 'harden', 'msg': '已锁定主窗口不可最小化'})
+        return True
+    except Exception:
+        return False
+
+
+def start_render_watchdog(window, url, api=None):
+    """长直播守护：页面探针断流、长时间零帧、窗口被最小化或内存暴涨，就自动救回来。"""
 
     def loop():
+        tick = 0
+        mem_high = 0
+        mem_reloaded = False
+        hardened = False
         while True:
             time.sleep(10)
+            tick += 1
+            try:
+                if not hardened:
+                    hardened = harden_window()
+            except Exception:
+                pass
+            try:
+                hwnd = find_printer_hwnd()
+                if hwnd:
+                    import ctypes
+                    u = ctypes.windll.user32
+                    if u.IsIconic(hwnd):
+                        u.ShowWindow(hwnd, 9)  # SW_RESTORE
+                        diag_persist({'kind': 'restore', 'msg': '窗口被最小化，已自动恢复并刷新页面'})
+                        # 最小化后 WebView2 的合成层常常回不来（页面还在跑但整块黑），恢复后强制刷一次页面。
+                        time.sleep(3)
+                        try:
+                            window.evaluate_js('location.reload()')
+                        except Exception:
+                            try:
+                                window.load_url(url)
+                            except Exception:
+                                pass
+                        LAST_PROBE[0] = time.time()
+                        STALL_COUNT[0] = 0
+            except Exception:
+                pass
+            try:
+                if tick % 6 == 0:
+                    mb = process_mem_mb({'msedgewebview2.exe', 'pythonw.exe', 'python.exe'})
+                    if mb:
+                        diag_persist({'kind': 'mem', 'webview+python MB': mb})
+                        if mb >= 3500:
+                            mem_high += 1
+                        else:
+                            mem_high = 0
+                            mem_reloaded = False
+                        if mem_high >= 2:
+                            mem_high = 0
+                            if mem_reloaded and api is not None:
+                                # 刷新页面也没把内存降下来，说明涨在 WebView2 进程自己身上，只能整程序重启。
+                                diag_persist({'kind': 'watchdog', 'msg': '内存 %d MB 仍过高，完整重启程序' % mb})
+                                try:
+                                    api.restart_program()
+                                except Exception:
+                                    pass
+                                mem_reloaded = False
+                            else:
+                                diag_persist({'kind': 'watchdog', 'msg': '内存 %d MB 过高，自动刷新页面' % mb})
+                                try:
+                                    window.evaluate_js('location.reload()')
+                                except Exception:
+                                    pass
+                                mem_reloaded = True
+                                LAST_PROBE[0] = time.time()
+                                STALL_COUNT[0] = 0
+            except Exception:
+                pass
             try:
                 if LAST_PROBE[0] == 0:
                     continue
@@ -836,7 +987,7 @@ def main():
             webview.create_window('头像打印机 · 桌面版', url, js_api=api, width=1380, height=860,
                 min_size=(900, 650), background_color='#0b0e14')
             try:
-                start_render_watchdog(webview.windows[0], url)
+                start_render_watchdog(webview.windows[0], url, api)
             except Exception:
                 pass
             def start_requested_room():
