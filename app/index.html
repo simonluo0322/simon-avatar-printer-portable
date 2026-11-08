@@ -322,7 +322,7 @@ if(tier===2){let lower=mesh(new THREE.CylinderGeometry(.86,.88,.12,8),porcelain,
 
 let insetMat=new THREE.MeshStandardMaterial({color:0x292c30,metalness:.55,roughness:.35,clippingPlanes:[plane]});
 torus(.635,.025,0,1.7,-.012,insetMat,g);torus(.672,.018,0,1.7,-.002,rimMat,g);torus(.665,.014,0,1.7,-.252,rimMat,g);
-let avatarMat=new THREE.MeshStandardMaterial({color:0xffffff,roughness:.85,metalness:0,envMapIntensity:.25,emissive:0xffffff,emissiveIntensity:.16,clippingPlanes:[plane]});
+let avatarMat=new THREE.MeshStandardMaterial({color:0xe0e0e0,roughness:.9,metalness:0,envMapIntensity:.10,emissive:0x000000,emissiveIntensity:0,clippingPlanes:[plane]});
 // Radially curved UV surface preserves the full image while catching light like a badge.
 const segments=96,rings=18,positions=[],uvs=[],indices=[],radius=.607;
 for(let r=0;r<=rings;r++){let rr=r/rings;for(let j=0;j<=segments;j++){let angle=j/segments*Math.PI*2,px=Math.cos(angle)*rr,py=Math.sin(angle)*rr;positions.push(px*radius,py*radius,.065*(1-rr*rr));uvs.push(.5+px*.5,.5+py*.5)}}
@@ -332,7 +332,7 @@ let face=mesh(portraitGeo,avatarMat,g);face.position.set(0,1.7,.006);
 // Solid convex cover glass: refraction, Fresnel reflections and a polished rim.
 let coverGeometry=portraitGeo.clone();let coverPositions=coverGeometry.attributes.position;
 for(let i=0;i<coverPositions.count;i++){let x=coverPositions.getX(i),y=coverPositions.getY(i);let rr=Math.min(1,(x*x+y*y)/(radius*radius));coverPositions.setZ(i,.018+.125*(1-rr))}coverPositions.needsUpdate=true;coverGeometry.computeVertexNormals();
-let glassMat=new THREE.MeshPhysicalMaterial({color:0xffffff,metalness:0,roughness:.025,transmission:0,transparent:true,opacity:.12,ior:1.5,specularIntensity:1,envMapIntensity:2.2,clearcoat:1,clearcoatRoughness:.012,depthWrite:false,clippingPlanes:[plane]});
+let glassMat=new THREE.MeshPhysicalMaterial({color:0xffffff,metalness:0,roughness:.03,transmission:0,transparent:true,opacity:.055,ior:1.5,specularIntensity:.6,envMapIntensity:1.1,clearcoat:1,clearcoatRoughness:.012,depthWrite:false,clippingPlanes:[plane]});
 let cover=mesh(coverGeometry,glassMat,g);cover.position.set(0,1.7,.018);cover.castShadow=false;cover.receiveShadow=false;
 const glassEdgeMat=new THREE.MeshPhysicalMaterial({color:0xe8f4f2,metalness:0,roughness:.055,transmission:.85,thickness:.035,ior:1.5,envMapIntensity:1.6,clearcoat:1,clearcoatRoughness:.03,depthWrite:false,clippingPlanes:[plane]});
 let glassEdge=torus(.607,.012,0,1.7,.036,glassEdgeMat,g);glassEdge.castShadow=false;glassEdge.receiveShadow=false;
