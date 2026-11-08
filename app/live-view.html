@@ -82,8 +82,8 @@ function sizeRankHud(){
   // 头像高度 = 右侧文字总高（1.2 倍行高）再放大 1.35 倍
   const ava=Math.round((Math.max(labF,sF)+nameF)*1.2*1.35);
   hud.style.width=hudW+'px';
-  hud.style.left=Math.round(r.left+r.w*0.565)+'px';
-  hud.style.top=Math.round(r.top+r.h*0.205)+'px';
+  hud.style.left=Math.round(r.left+r.w*0.53)+'px';
+  hud.style.top=Math.round(r.top+r.h*0.17)+'px';
   const t=hud.querySelector('.rh-title');
   if(t){t.style.fontSize=tF+'px';t.style.padding=Math.round(pad*0.7)+'px 0 '+Math.round(pad*0.6)+'px';t.style.marginBottom=Math.round(pad*0.5)+'px'}
   hud.querySelectorAll('.rh-row').forEach(row=>{
