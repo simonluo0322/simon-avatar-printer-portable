@@ -65,6 +65,37 @@ ACTIVE_PORT = 8080
 PLATE_STATE = {'on': True, 'name': '', 'score': '', 'avatar': '', 'hud': False, 'rank': []}
 AVATAR_CACHE = {}
 DIAG_LOG = []
+# 长直播防黑屏：页面每 5 秒打一次探针，服务端记下最后时间和「零帧」次数；
+# 超时或长时间零帧就自动刷新 WebView2（黑屏基本是渲染进程僵死/显卡上下文丢失）。
+LAST_PROBE = [0.0]
+STALL_COUNT = [0]
+DIAG_FILE = None
+DIAG_FILE_LIMIT = 4 * 1024 * 1024
+try:
+    DIAG_FILE = ROOT / 'diag.log'
+except Exception:
+    DIAG_FILE = None
+
+
+def diag_persist(body):
+    """把探针追加到 diag.log，程序崩溃后还能看到崩溃前最后几秒的状态。"""
+    try:
+        if DIAG_FILE is None:
+            return
+        if DIAG_FILE.exists() and DIAG_FILE.stat().st_size > DIAG_FILE_LIMIT:
+            try:
+                (DIAG_FILE.parent / (DIAG_FILE.name + '.1')).unlink()
+            except OSError:
+                pass
+            try:
+                DIAG_FILE.rename(DIAG_FILE.parent / (DIAG_FILE.name + '.1'))
+            except OSError:
+                pass
+        line = time.strftime('[%H:%M:%S] ') + json.dumps(body, ensure_ascii=False)[:400]
+        with open(DIAG_FILE, 'a', encoding='utf-8') as fh:
+            fh.write(line + '\n')
+    except Exception:
+        pass
 
 # 播报语音：系统 SAPI 太机械，改成微软神经语音（edge-tts，需要联网）。
 # 同一句话合过就缓存，第二次零延迟；断网时接口返回 503，页面自动退回系统语音。
@@ -246,6 +277,15 @@ def ensure_server():
                     body = json.loads(self.rfile.read(length)) if 0 < length <= 65536 else {}
                     DIAG_LOG.append(body)
                     del DIAG_LOG[:-40]
+                    try:
+                        if isinstance(body, dict) and body.get('kind') == 'probe':
+                            LAST_PROBE[0] = time.time()
+                            fps = body.get('fps', 0) or 0
+                            hidden = bool(body.get('hid'))
+                            STALL_COUNT[0] = 0 if (fps >= 1 or hidden) else STALL_COUNT[0] + 1
+                    except Exception:
+                        pass
+                    diag_persist(body)
                     return self._json(200, '{"ok":true}')
                 except Exception:
                     return self._json(400, '{"error":"bad"}')
@@ -685,6 +725,42 @@ def _patch_webview2_antithrottle():
         pass
 
 
+def start_render_watchdog(window, url):
+    """长直播守护：页面探针断流或长时间零帧，就自动刷新窗口把画面救回来。"""
+
+    def loop():
+        while True:
+            time.sleep(10)
+            try:
+                if LAST_PROBE[0] == 0:
+                    continue
+                age = time.time() - LAST_PROBE[0]
+                if age < 90 and STALL_COUNT[0] < 10:
+                    continue
+                reason = ('页面 %d 秒没有探针' % int(age)) if age >= 90 else ('连续 %d 次零帧' % STALL_COUNT[0])
+                print('[watchdog] ' + reason + '，自动刷新窗口', flush=True)
+                diag_persist({'kind': 'watchdog', 'msg': reason})
+                ok = False
+                for step in ('reload', 'url'):
+                    try:
+                        if step == 'reload':
+                            window.evaluate_js('location.reload()')
+                        else:
+                            window.load_url(url)
+                        ok = True
+                        break
+                    except Exception:
+                        continue
+                LAST_PROBE[0] = time.time()
+                STALL_COUNT[0] = 0
+                if not ok:
+                    diag_persist({'kind': 'watchdog', 'msg': '刷新失败，需要手动重启'})
+            except Exception:
+                pass
+
+    threading.Thread(target=loop, daemon=True).start()
+
+
 def main():
     # 本机部署修正：小窗由 pythonw 无控制台启动，出错时什么都看不到，这里把异常写进日志。
     if '--scene-view' in sys.argv:
@@ -759,6 +835,10 @@ def main():
             _patch_webview2_antithrottle()
             webview.create_window('头像打印机 · 桌面版', url, js_api=api, width=1380, height=860,
                 min_size=(900, 650), background_color='#0b0e14')
+            try:
+                start_render_watchdog(webview.windows[0], url)
+            except Exception:
+                pass
             def start_requested_room():
                 if not args.room:
                     return
